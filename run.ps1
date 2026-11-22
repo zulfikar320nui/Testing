@@ -1,13 +1,23 @@
 $ErrorActionPreference = "Continue"
 
-# 1. Setup RDP & User administrator1
+# 1. Install & Connect Tailscale
+Write-Host "Menginstall Tailscale..."
+Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "tailscale.msi"
+Start-Process msiexec.exe -ArgumentList "/i tailscale.msi /qn /norestart" -Wait
+Start-Sleep -Seconds 5
+
+$tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+& $tsExe up --authkey="$env:TS_AUTHKEY" --hostname="gh-rdp-$(Get-Random -Maximum 9999)" --unattended
+Start-Sleep -Seconds 5
+$tsIP = (& $tsExe ip -4).Trim()
+
+# 2. Setup RDP & Generate Profil Asli administrator1
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
 Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 net user administrator1 "$env:RDP_PASSWORD" /add /Y
 net localgroup Administrators administrator1 /add
 net localgroup "Remote Desktop Users" administrator1 /add
 
-# Paksa Windows generate profil asli administrator1 (C:\Users\administrator1) tanpa bikin folder ganda
 $pass = ConvertTo-SecureString "$env:RDP_PASSWORD" -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential ("administrator1", $pass)
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -Credential $cred -LoadUserProfile -Wait
@@ -15,10 +25,11 @@ Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -Credential $cred -Loa
 $desktopPath = "C:\Users\administrator1\Desktop"
 icacls "C:\Users\administrator1" /grant "administrator1:(OI)(CI)F" /T /Q | Out-Null
 
-# 2. Sedot & Restore Backup TAR jika ada
+# 3. Sedot & Restore Backup TAR via IP Tailscale sesi sebelumnya (jika ada)
 $backupUrl = $env:BACKUP_URL
 if (-not [string]::IsNullOrWhiteSpace($backupUrl)) {
     try {
+        Write-Host "Menyedot backup.tar dari http://$backupUrl/backup.tar ..."
         Invoke-WebRequest -Uri "http://$backupUrl/backup.tar" -OutFile "C:\backup_in.tar" -TimeoutSec 180
         New-Item -ItemType Directory -Force -Path "C:\restore_temp" | Out-Null
         tar -xf "C:\backup_in.tar" -C "C:\restore_temp"
@@ -44,42 +55,35 @@ if (-not [string]::IsNullOrWhiteSpace($backupUrl)) {
     }
 }
 
-# 3. Auto-Start start.bat di Desktop sebagai administrator1
+# 4. Auto-Start start.bat sebagai Administrator (Highest)
 $startScript = "C:\Users\administrator1\Desktop\start.bat"
 if (Test-Path $startScript) {
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$startScript`"" -WorkingDirectory $desktopPath -Credential $cred -LoadUserProfile -WindowStyle Hidden
-    Write-Host "start.bat berhasil dijalankan."
+    $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$startScript`"" -WorkingDirectory $desktopPath
+    $principal = New-ScheduledTaskPrincipal -UserId "administrator1" -LogonType Password -RunLevel Highest
+    Register-ScheduledTask -TaskName "AutoStartDesktop" -Action $action -Principal $principal -Password "$env:RDP_PASSWORD" -Force | Out-Null
+    Start-ScheduledTask -TaskName "AutoStartDesktop"
+    Write-Host "start.bat berhasil dijalankan dalam mode Administrator."
 } else {
     Write-Host "File start.bat tidak ditemukan, melewati auto-start."
 }
 
-# 4. Jalankan Bore untuk RDP & Tampilkan di Log
-Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
-Expand-Archive -Path "bore.zip" -DestinationPath "." -Force
-
-Start-Process -FilePath ".\bore.exe" -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput "bore_rdp.log" -RedirectStandardError "bore_rdp_err.log" -NoNewWindow
-Start-Sleep -Seconds 6
-
-$logContent = (Get-Content "bore_rdp.log" -ErrorAction SilentlyContinue) + (Get-Content "bore_rdp_err.log" -ErrorAction SilentlyContinue)
-$match = $logContent | Select-String -Pattern "bore\.pub:\d+"
-$rdpAddress = if ($match) { $match.Matches[0].Value } else { "Gagal mendapatkan port" }
-
+# 5. Tampilkan Info Koneksi di Log (+ Telegram jika token diisi)
 Write-Host "========================================"
-Write-Host "RDP AKTIF!"
-Write-Host "Host : $rdpAddress"
-Write-Host "User : administrator1"
+Write-Host "RDP TAILSCALE AKTIF!"
+Write-Host "IP Host : $tsIP"
+Write-Host "User    : administrator1"
 Write-Host "========================================"
 
 if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsNullOrWhiteSpace($env:TG_CHAT_ID)) {
-    $msg = "RDP Estafet Aktif!`nHost: $rdpAddress`nUser: administrator1`nPass: $($env:RDP_PASSWORD)"
+    $msg = "RDP Tailscale Aktif!`nIP: $tsIP`nUser: administrator1`nPass: $($env:RDP_PASSWORD)"
     $tgUri = "https://api.telegram.org/bot$($env:TG_BOT_TOKEN)/sendMessage"
     Invoke-RestMethod -Uri $tgUri -Method Post -Body @{ chat_id = $env:TG_CHAT_ID; text = $msg }
 }
 
-# 5. Tunggu 348 menit (5 jam 48 menit)
+# 6. Tunggu 348 menit (5 jam 48 menit)
 Start-Sleep -Seconds (348 * 60)
 
-# 6. Packing Desktop & Path Tambahan ke backup.tar
+# 7. Packing Desktop & Path Tambahan ke backup.tar
 New-Item -ItemType Directory -Force -Path "C:\transfer_out\pack" | Out-Null
 robocopy $desktopPath "C:\transfer_out\pack\desktop" /E /XF desktop.ini *.lnk /XD node_modules .git __pycache__ | Out-Null
 
@@ -94,28 +98,24 @@ $backupHost = ""
 
 if ($items.Count -gt 0) {
     tar -cf "C:\transfer_out\backup.tar" -C "C:\transfer_out\pack" .
-    Start-Process -FilePath "python" -ArgumentList "-m http.server 8888 --directory C:\transfer_out" -NoNewWindow
-    Start-Sleep -Seconds 2
-    Start-Process -FilePath ".\bore.exe" -ArgumentList "local 8888 --to bore.pub" -RedirectStandardOutput "bore_http.log" -RedirectStandardError "bore_http_err.log" -NoNewWindow
-    Start-Sleep -Seconds 6
-
-    $httpLog = (Get-Content "bore_http.log" -ErrorAction SilentlyContinue) + (Get-Content "bore_http_err.log" -ErrorAction SilentlyContinue)
-    $httpMatch = $httpLog | Select-String -Pattern "bore\.pub:\d+"
-    if ($httpMatch) { $backupHost = $httpMatch.Matches[0].Value }
+    # Buka HTTP server langsung di IP Tailscale port 8888
+    Start-Process -FilePath "python" -ArgumentList "-m http.server 8888 --bind $tsIP --directory C:\transfer_out" -NoNewWindow
+    Start-Sleep -Seconds 3
+    $backupHost = "$($tsIP):8888"
 }
 
-# 7. Trigger sesi estafet berikutnya
+# 8. Trigger sesi estafet berikutnya
 $headers = @{ Authorization = "Bearer $($env:GH_PAT)"; Accept = "application/vnd.github.v3+json" }
 $ghUri = "https://api.github.com/repos/$($env:GITHUB_REPO)/actions/workflows/estafet.yml/dispatches"
 $payload = @{ ref = "main"; inputs = @{ backup_url = $backupHost } } | ConvertTo-Json
 Invoke-RestMethod -Uri $ghUri -Method Post -Headers $headers -Body $payload
 
-Write-Host "Estafet sesi berikutnya telah di-trigger! Backup URL: $backupHost"
+Write-Host "Estafet sesi berikutnya telah di-trigger! Backup P2P: $backupHost"
 
 if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsNullOrWhiteSpace($env:TG_CHAT_ID)) {
     $tgUri = "https://api.telegram.org/bot$($env:TG_BOT_TOKEN)/sendMessage"
     $notifText = if ($backupHost -ne "") {
-        "Estafet Sesi Dimulai!`nServer TAR: $backupHost`nMenunggu 9 menit untuk sedot backup.tar."
+        "Estafet Sesi Dimulai!`nTransfer P2P: $backupHost`nMenunggu 9 menit untuk sedot backup.tar."
     } else {
         "Estafet Sesi Dimulai!`nDesktop kosong, langsung lanjut sesi baru."
     }
@@ -125,3 +125,6 @@ if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsN
 if ($backupHost -ne "") {
     Start-Sleep -Seconds (9 * 60)
 }
+
+# Logout Tailscale sebelum VM mati agar node langsung hilang dari dashboard
+& $tsExe logout
