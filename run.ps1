@@ -7,8 +7,12 @@ net user administrator1 "$env:RDP_PASSWORD" /add /Y
 net localgroup Administrators administrator1 /add
 net localgroup "Remote Desktop Users" administrator1 /add
 
+# Paksa Windows generate profil asli administrator1 (C:\Users\administrator1) tanpa bikin folder ganda
+$pass = ConvertTo-SecureString "$env:RDP_PASSWORD" -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential ("administrator1", $pass)
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -Credential $cred -LoadUserProfile -Wait
+
 $desktopPath = "C:\Users\administrator1\Desktop"
-New-Item -ItemType Directory -Force -Path $desktopPath | Out-Null
 icacls "C:\Users\administrator1" /grant "administrator1:(OI)(CI)F" /T /Q | Out-Null
 
 # 2. Sedot & Restore Backup TAR jika ada
@@ -43,9 +47,7 @@ if (-not [string]::IsNullOrWhiteSpace($backupUrl)) {
 # 3. Auto-Start start.bat di Desktop sebagai administrator1
 $startScript = "C:\Users\administrator1\Desktop\start.bat"
 if (Test-Path $startScript) {
-    $pass = ConvertTo-SecureString "$env:RDP_PASSWORD" -AsPlainText -Force
-    $cred = New-Object System.Management.Automation.PSCredential ("administrator1", $pass)
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$startScript`"" -WorkingDirectory $desktopPath -Credential $cred -WindowStyle Hidden
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$startScript`"" -WorkingDirectory $desktopPath -Credential $cred -LoadUserProfile -WindowStyle Hidden
     Write-Host "start.bat berhasil dijalankan."
 } else {
     Write-Host "File start.bat tidak ditemukan, melewati auto-start."
