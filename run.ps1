@@ -11,9 +11,11 @@ $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
 Start-Sleep -Seconds 5
 $tsIP = (& $tsExe ip -4).Trim()
 
-# 2. Setup RDP & Generate Profil Asli administrator1
+# 2. Setup RDP, Firewall & Generate Profil Asli administrator1
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
 Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+New-NetFirewallRule -DisplayName "Allow Estafet HTTP 8888" -Direction Inbound -Protocol TCP -LocalPort 8888 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+
 net user administrator1 "$env:RDP_PASSWORD" /add /Y
 net localgroup Administrators administrator1 /add
 net localgroup "Remote Desktop Users" administrator1 /add
@@ -55,14 +57,12 @@ if (-not [string]::IsNullOrWhiteSpace($backupUrl)) {
     }
 }
 
-# 4. Auto-Start start.bat sebagai Administrator (Highest)
+# 4. Auto-Start start.bat sebagai Administrator (Highest) via schtasks.exe
 $startScript = "C:\Users\administrator1\Desktop\start.bat"
 if (Test-Path $startScript) {
-    $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$startScript`"" -WorkingDirectory $desktopPath
-    $principal = New-ScheduledTaskPrincipal -UserId "administrator1" -LogonType Password -RunLevel Highest
-    Register-ScheduledTask -TaskName "AutoStartDesktop" -Action $action -Principal $principal -Password "$env:RDP_PASSWORD" -Force | Out-Null
-    Start-ScheduledTask -TaskName "AutoStartDesktop"
-    Write-Host "start.bat berhasil dijalankan dalam mode Administrator."
+    schtasks.exe /Create /TN "AutoStartDesktop" /TR "cmd.exe /c `"$startScript`"" /SC ONCE /ST 00:00 /RU "administrator1" /RP "$env:RDP_PASSWORD" /RL HIGHEST /F
+    schtasks.exe /Run /TN "AutoStartDesktop"
+    Write-Host "start.bat berhasil dijalankan dalam mode Administrator (HIGHEST)."
 } else {
     Write-Host "File start.bat tidak ditemukan, melewati auto-start."
 }
@@ -98,7 +98,6 @@ $backupHost = ""
 
 if ($items.Count -gt 0) {
     tar -cf "C:\transfer_out\backup.tar" -C "C:\transfer_out\pack" .
-    # Buka HTTP server langsung di IP Tailscale port 8888
     Start-Process -FilePath "python" -ArgumentList "-m http.server 8888 --bind $tsIP --directory C:\transfer_out" -NoNewWindow
     Start-Sleep -Seconds 3
     $backupHost = "$($tsIP):8888"
@@ -126,5 +125,4 @@ if ($backupHost -ne "") {
     Start-Sleep -Seconds (9 * 60)
 }
 
-# Logout Tailscale sebelum VM mati agar node langsung hilang dari dashboard
 & $tsExe logout
