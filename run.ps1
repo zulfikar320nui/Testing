@@ -8,10 +8,10 @@ Start-Sleep -Seconds 5
 
 $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
 & $tsExe up --authkey="$env:TS_AUTHKEY" --hostname="gh-rdp-$(Get-Random -Maximum 9999)" --unattended
-Start-Sleep -Seconds 5
+Start-Sleep -Seconds 8
 $tsIP = (& $tsExe ip -4).Trim()
 
-# 2. Setup RDP, Firewall & Generate Profil Asli administrator1
+# 2. Setup RDP, Firewall & Profil Asli administrator1
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
 Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 New-NetFirewallRule -DisplayName "Allow Estafet HTTP 8888" -Direction Inbound -Protocol TCP -LocalPort 8888 -Action Allow -ErrorAction SilentlyContinue | Out-Null
@@ -27,34 +27,53 @@ Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -Credential $cred -Loa
 $desktopPath = "C:\Users\administrator1\Desktop"
 icacls "C:\Users\administrator1" /grant "administrator1:(OI)(CI)F" /T /Q | Out-Null
 
-# 3. Sedot & Restore Backup TAR via IP Tailscale sesi sebelumnya (jika ada)
+# 3. Sedot & Restore Backup TAR dengan Retry (5x percobaan)
 $backupUrl = $env:BACKUP_URL
 if (-not [string]::IsNullOrWhiteSpace($backupUrl)) {
-    try {
-        Write-Host "Menyedot backup.tar dari http://$backupUrl/backup.tar ..."
-        Invoke-WebRequest -Uri "http://$backupUrl/backup.tar" -OutFile "C:\backup_in.tar" -TimeoutSec 180
-        New-Item -ItemType Directory -Force -Path "C:\restore_temp" | Out-Null
-        tar -xf "C:\backup_in.tar" -C "C:\restore_temp"
-        Remove-Item "C:\backup_in.tar" -Force
-
-        if (Test-Path "C:\restore_temp\desktop") {
-            robocopy "C:\restore_temp\desktop" $desktopPath /E /NFL /NDL /NJH /NJS | Out-Null
+    $downloaded = $false
+    for ($i = 1; $i -le 5; $i++) {
+        try {
+            Write-Host "Percobaan ke-$i menyedot backup.tar dari http://$backupUrl/backup.tar ..."
+            Invoke-WebRequest -Uri "http://$backupUrl/backup.tar" -OutFile "C:\backup_in.tar" -TimeoutSec 180
+            if (Test-Path "C:\backup_in.tar") {
+                $downloaded = $true
+                break
+            }
+        } catch {
+            Write-Host "Percobaan ke-$i gagal: $($_.Exception.Message)"
+            Start-Sleep -Seconds 10
         }
-        if (Test-Path "C:\restore_temp\extra_1") {
-            New-Item -ItemType Directory -Force -Path "C:\Users\administrator1\AppData\Roaming\NamaAplikasi" | Out-Null
-            robocopy "C:\restore_temp\extra_1" "C:\Users\administrator1\AppData\Roaming\NamaAplikasi" /E /NFL /NDL /NJH /NJS | Out-Null
-        }
-        if (Test-Path "C:\restore_temp\extra_2") {
-            New-Item -ItemType Directory -Force -Path "C:\ProgramData\NamaFolder" | Out-Null
-            robocopy "C:\restore_temp\extra_2" "C:\ProgramData\NamaFolder" /E /NFL /NDL /NJH /NJS | Out-Null
-        }
-
-        Remove-Item "C:\restore_temp" -Recurse -Force
-        icacls "C:\Users\administrator1" /grant "administrator1:(OI)(CI)F" /T /Q | Out-Null
-        Write-Host "Backup TAR berhasil di-restore!"
-    } catch {
-        Write-Host "Gagal restore backup: $($_.Exception.Message)"
     }
+
+    if ($downloaded) {
+        try {
+            New-Item -ItemType Directory -Force -Path "C:\restore_temp" | Out-Null
+            tar -xf "C:\backup_in.tar" -C "C:\restore_temp"
+            Remove-Item "C:\backup_in.tar" -Force
+
+            if (Test-Path "C:\restore_temp\desktop") {
+                robocopy "C:\restore_temp\desktop" $desktopPath /E /NFL /NDL /NJH /NJS | Out-Null
+            }
+            if (Test-Path "C:\restore_temp\extra_1") {
+                New-Item -ItemType Directory -Force -Path "C:\Users\administrator1\AppData\Roaming\NamaAplikasi" | Out-Null
+                robocopy "C:\restore_temp\extra_1" "C:\Users\administrator1\AppData\Roaming\NamaAplikasi" /E /NFL /NDL /NJH /NJS | Out-Null
+            }
+            if (Test-Path "C:\restore_temp\extra_2") {
+                New-Item -ItemType Directory -Force -Path "C:\ProgramData\NamaFolder" | Out-Null
+                robocopy "C:\restore_temp\extra_2" "C:\ProgramData\NamaFolder" /E /NFL /NDL /NJH /NJS | Out-Null
+            }
+
+            Remove-Item "C:\restore_temp" -Recurse -Force
+            icacls "C:\Users\administrator1" /grant "administrator1:(OI)(CI)F" /T /Q | Out-Null
+            Write-Host "Backup TAR berhasil di-restore!"
+        } catch {
+            Write-Host "Gagal ekstrak backup.tar: $($_.Exception.Message)"
+        }
+    } else {
+        Write-Host "PERINGATAN: Gagal mengunduh backup.tar setelah 5 percobaan!"
+    }
+} else {
+    Write-Host "BACKUP_URL kosong (sesi awal / manual run)."
 }
 
 # 4. Auto-Start start.bat sebagai Administrator (Highest) via schtasks.exe
@@ -67,7 +86,7 @@ if (Test-Path $startScript) {
     Write-Host "File start.bat tidak ditemukan, melewati auto-start."
 }
 
-# 5. Tampilkan Info Koneksi di Log (+ Telegram jika token diisi)
+# 5. Tampilkan Info Koneksi di Log & Telegram
 Write-Host "========================================"
 Write-Host "RDP TAILSCALE AKTIF!"
 Write-Host "IP Host : $tsIP"
@@ -83,9 +102,12 @@ if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsN
 # 6. Tunggu 348 menit (5 jam 48 menit)
 Start-Sleep -Seconds (348 * 60)
 
-# 7. Packing Desktop & Path Tambahan ke backup.tar
+# 7. Matikan proses Node agar file tidak terkunci, lalu Packing Desktop (termasuk node_modules)
+taskkill /F /IM node.exe /T 2>$null
+Start-Sleep -Seconds 3
+
 New-Item -ItemType Directory -Force -Path "C:\transfer_out\pack" | Out-Null
-robocopy $desktopPath "C:\transfer_out\pack\desktop" /E /XF desktop.ini *.lnk /XD node_modules .git __pycache__ | Out-Null
+robocopy $desktopPath "C:\transfer_out\pack\desktop" /E /XF desktop.ini *.lnk /XD .git __pycache__ | Out-Null
 
 $path1 = "C:\Users\administrator1\AppData\Roaming\NamaAplikasi"
 if (Test-Path $path1) { robocopy $path1 "C:\transfer_out\pack\extra_1" /E /XD Cache "Code Cache" GPUCache | Out-Null }
