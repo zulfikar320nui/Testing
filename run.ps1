@@ -27,22 +27,19 @@ Start-Process -FilePath "cmd.exe" -ArgumentList "/c exit" -Credential $cred -Loa
 $desktopPath = "C:\Users\administrator1\Desktop"
 icacls "C:\Users\administrator1" /grant "administrator1:(OI)(CI)F" /T /Q | Out-Null
 
-# 3. Sedot & Restore Backup TAR dengan Retry (5x percobaan)
+# 3. Sedot & Restore Backup TAR via P2P Tailscale dengan curl.exe + Retry
 $backupUrl = $env:BACKUP_URL
 if (-not [string]::IsNullOrWhiteSpace($backupUrl)) {
     $downloaded = $false
     for ($i = 1; $i -le 5; $i++) {
-        try {
-            Write-Host "Percobaan ke-$i menyedot backup.tar dari http://$backupUrl/backup.tar ..."
-            Invoke-WebRequest -Uri "http://$backupUrl/backup.tar" -OutFile "C:\backup_in.tar" -TimeoutSec 180
-            if (Test-Path "C:\backup_in.tar") {
-                $downloaded = $true
-                break
-            }
-        } catch {
-            Write-Host "Percobaan ke-$i gagal: $($_.Exception.Message)"
-            Start-Sleep -Seconds 10
+        Write-Host "Percobaan ke-$i menyedot backup.tar dari http://$backupUrl/backup.tar ..."
+        curl.exe -sSf --connect-timeout 15 --max-time 300 "http://$backupUrl/backup.tar" -o "C:\backup_in.tar"
+        if ($LASTEXITCODE -eq 0 -and (Test-Path "C:\backup_in.tar")) {
+            $downloaded = $true
+            break
         }
+        Write-Host "Percobaan ke-$i gagal, mengulang dalam 10 detik..."
+        Start-Sleep -Seconds 10
     }
 
     if ($downloaded) {
@@ -72,11 +69,9 @@ if (-not [string]::IsNullOrWhiteSpace($backupUrl)) {
     } else {
         Write-Host "PERINGATAN: Gagal mengunduh backup.tar setelah 5 percobaan!"
     }
-} else {
-    Write-Host "BACKUP_URL kosong (sesi awal / manual run)."
 }
 
-# 4. Auto-Start start.bat sebagai Administrator (Highest) via schtasks.exe
+# 4. Auto-Start start.bat sebagai Administrator (Highest)
 $startScript = "C:\Users\administrator1\Desktop\start.bat"
 if (Test-Path $startScript) {
     schtasks.exe /Create /TN "AutoStartDesktop" /TR "cmd.exe /c `"$startScript`"" /SC ONCE /ST 00:00 /RU "administrator1" /RP "$env:RDP_PASSWORD" /RL HIGHEST /F
@@ -99,10 +94,10 @@ if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsN
     Invoke-RestMethod -Uri $tgUri -Method Post -Body @{ chat_id = $env:TG_CHAT_ID; text = $msg }
 }
 
-# 6. Tunggu 348 menit (5 jam 48 menit)
-Start-Sleep -Seconds (348 * 60)
+# 6. Tunggu 330 menit (5,5 jam)
+Start-Sleep -Seconds (330 * 60)
 
-# 7. Matikan proses Node agar file tidak terkunci, lalu Packing Desktop (termasuk node_modules)
+# 7. Matikan Node agar tidak file-lock, lalu Packing Desktop (termasuk node_modules)
 taskkill /F /IM node.exe /T 2>$null
 Start-Sleep -Seconds 3
 
@@ -136,7 +131,7 @@ Write-Host "Estafet sesi berikutnya telah di-trigger! Backup P2P: $backupHost"
 if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsNullOrWhiteSpace($env:TG_CHAT_ID)) {
     $tgUri = "https://api.telegram.org/bot$($env:TG_BOT_TOKEN)/sendMessage"
     $notifText = if ($backupHost -ne "") {
-        "Estafet Sesi Dimulai!`nTransfer P2P: $backupHost`nMenunggu 9 menit untuk sedot backup.tar."
+        "Estafet Sesi Dimulai!`nTransfer P2P: $backupHost`nMenunggu 15 menit untuk sedot backup.tar."
     } else {
         "Estafet Sesi Dimulai!`nDesktop kosong, langsung lanjut sesi baru."
     }
@@ -144,7 +139,7 @@ if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsN
 }
 
 if ($backupHost -ne "") {
-    Start-Sleep -Seconds (9 * 60)
+    Start-Sleep -Seconds (15 * 60)
 }
 
 & $tsExe logout
