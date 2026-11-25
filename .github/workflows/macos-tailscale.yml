@@ -1,0 +1,24 @@
+name: macOS Tailscale Only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos-tailscale:
+    runs-on: macos-latest
+    timeout-minutes: 360
+    steps:
+      - name: Install & Connect Tailscale
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        run: |
+          brew install tailscale
+          sudo brew services start tailscale
+          sleep 5
+          sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="gh-macos-$(jot -r 1 1000 9999)"
+          sleep 3
+          echo "========================================"
+          echo "TAILSCALE MACOS AKTIF!"
+          echo "IP Tailscale: $(tailscale ip -4)"
+          echo "========================================"
+          sleep 21500
