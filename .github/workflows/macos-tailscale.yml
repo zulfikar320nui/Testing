@@ -21,11 +21,11 @@ jobs:
           sleep 3
           TS_IP=$(tailscale ip -4)
 
-          # 2. Set Password User 'runner' & Aktifkan SSH (Remote Login)
-          sudo dscl . -passwd /Users/runner "$MAC_PASS"
-          sudo systemsetup -setremotelogin on
+          # 2. Buat User Admin Baru 'administrator1' (bypass password lama 'runner')
+          sudo sysadminctl -addUser administrator1 -fullName "Admin" -password "$MAC_PASS" -admin
 
-          # 3. Aktifkan VNC / Apple Remote Desktop (Layar GUI macOS)
+          # 3. Aktifkan SSH (Remote Login) & VNC (Apple Remote Desktop)
+          sudo systemsetup -setremotelogin on
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
             -clientopts -setvnclegacy -vnclegacy yes \
@@ -35,7 +35,7 @@ jobs:
           echo "========================================"
           echo "MACOS TAILSCALE AKTIF!"
           echo "IP Tailscale : $TS_IP"
-          echo "User SSH/VNC : runner"
+          echo "User SSH/VNC : administrator1"
           echo "Password     : (sesuai secret RDP_PASSWORD)"
           echo "========================================"
 
