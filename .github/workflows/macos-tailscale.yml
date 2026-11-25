@@ -21,22 +21,22 @@ jobs:
           sleep 3
           TS_IP=$(tailscale ip -4)
 
-          # 2. Aktifkan SSH sebagai cadangan
+          # 2. Aktifkan SSH sebagai akses utama/cadangan
           sudo sysadminctl -addUser administrator1 -fullName "Admin" -password "$MAC_PASS" -admin
           sudo systemsetup -setremotelogin on
 
-          # 3. Install Virtual Display (DeskPad) & RustDesk
+          # 3. Install Virtual Display (DeskPad) & RustDesk + Lepas Segel Gatekeeper
           brew install --cask deskpad rustdesk
-          sleep 3
+          sudo xattr -cr /Applications/DeskPad.app /Applications/RustDesk.app
 
-          # 4. Cegah layar tidur & buka aplikasi pakai path lengkap
-          caffeinate -d -i -m -u &
+          # 4. Jalankan di background agar tidak memblokir terminal
+          nohup caffeinate -d -i -m -u >/dev/null 2>&1 &
           open /Applications/DeskPad.app || true
           sleep 2
 
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --install-service || true
+          sudo nohup /Applications/RustDesk.app/Contents/MacOS/RustDesk --service >/dev/null 2>&1 &
           sleep 3
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "$MAC_PASS" || true
+          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "$MAC_PASS" >/dev/null 2>&1 || true
           open /Applications/RustDesk.app || true
           sleep 3
 
