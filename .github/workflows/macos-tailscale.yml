@@ -1,24 +1,44 @@
-name: macOS Tailscale Only
+name: macOS Tailscale + SSH + VNC
 
 on:
   workflow_dispatch:
 
 jobs:
-  macos-tailscale:
+  macos-env:
     runs-on: macos-latest
     timeout-minutes: 360
     steps:
-      - name: Install & Connect Tailscale
+      - name: Setup Tailscale, SSH & VNC
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          MAC_PASS: ${{ secrets.RDP_PASSWORD }}
         run: |
+          # 1. Install & Jalankan Tailscale
           brew install tailscale
           sudo brew services start tailscale
           sleep 5
           sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="gh-macos-$(jot -r 1 1000 9999)"
           sleep 3
+          TS_IP=$(tailscale ip -4)
+
+          # 2. Set Password User 'runner' & Aktifkan SSH (Remote Login)
+          sudo dscl . -passwd /Users/runner "$MAC_PASS"
+          sudo systemsetup -setremotelogin on
+
+          # 3. Aktifkan VNC / Apple Remote Desktop (Layar GUI macOS)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvnclegacy -vnclegacy yes \
+            -clientopts -setvncpw -vncpw "$MAC_PASS" \
+            -restart -agent -privs -all
+
           echo "========================================"
-          echo "TAILSCALE MACOS AKTIF!"
-          echo "IP Tailscale: $(tailscale ip -4)"
+          echo "MACOS TAILSCALE AKTIF!"
+          echo "IP Tailscale : $TS_IP"
+          echo "User SSH/VNC : runner"
+          echo "Password     : (sesuai secret RDP_PASSWORD)"
           echo "========================================"
-          sleep 21500
+
+          # Tahan sesi aktif hingga mendekati batas 6 jam
+          sleep 21300
+          sudo tailscale logout
