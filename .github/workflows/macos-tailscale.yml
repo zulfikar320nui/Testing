@@ -1,4 +1,4 @@
-name: macOS Tailscale + SSH + VNC
+name: macOS Tailscale + Display (RustDesk)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 360
     steps:
-      - name: Setup Tailscale, SSH & VNC
+      - name: Setup Tailscale, Virtual Display & RustDesk
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
           MAC_PASS: ${{ secrets.RDP_PASSWORD }}
@@ -21,22 +21,35 @@ jobs:
           sleep 3
           TS_IP=$(tailscale ip -4)
 
-          # 2. Buat User Admin Baru 'administrator1' (bypass password lama 'runner')
+          # 2. Aktifkan SSH sebagai cadangan
           sudo sysadminctl -addUser administrator1 -fullName "Admin" -password "$MAC_PASS" -admin
-
-          # 3. Aktifkan SSH (Remote Login) & VNC (Apple Remote Desktop)
           sudo systemsetup -setremotelogin on
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
-            -clientopts -setvnclegacy -vnclegacy yes \
-            -clientopts -setvncpw -vncpw "$MAC_PASS" \
-            -restart -agent -privs -all
+
+          # 3. Install Virtual Display (DeskPad) & RustDesk
+          brew install --cask deskpad rustdesk
+
+          # 4. Izinkan akses TCC Screen Recording & Accessibility (jika SIP mengizinkan)
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1700000000);" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1700000000);" 2>/dev/null || true
+
+          # 5. Jalankan Virtual Display & RustDesk Service di sesi GUI 'runner'
+          open -a DeskPad
+          sleep 2
+          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --install-service || true
+          sleep 3
+          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "$MAC_PASS"
+          open -a RustDesk
+          sleep 3
+
+          RD_ID=$(/Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id 2>/dev/null || echo "Gunakan IP Tailscale")
 
           echo "========================================"
-          echo "MACOS TAILSCALE AKTIF!"
-          echo "IP Tailscale : $TS_IP"
-          echo "User SSH/VNC : administrator1"
-          echo "Password     : (sesuai secret RDP_PASSWORD)"
+          echo "MACOS DISPLAY AKTIF!"
+          echo "IP Tailscale (Direct IP) : $TS_IP"
+          echo "RustDesk ID              : $RD_ID"
+          echo "Password                 : (sesuai secret RDP_PASSWORD)"
           echo "========================================"
 
           # Tahan sesi aktif hingga mendekati batas 6 jam
