@@ -1,17 +1,19 @@
-name: macOS Tailscale + Display (RustDesk)
+name: macOS Latest RealVNC + Tailscale
 
 on:
   workflow_dispatch:
 
 jobs:
-  macos-env:
+  macos-vnc:
     runs-on: macos-latest
     timeout-minutes: 360
     steps:
-      - name: Setup Tailscale, Virtual Display & RustDesk
+      - name: Setup Tailscale & RealVNC Bypass
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
           MAC_PASS: ${{ secrets.RDP_PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           # 1. Install & Jalankan Tailscale
           brew install tailscale
@@ -21,34 +23,68 @@ jobs:
           sleep 3
           TS_IP=$(tailscale ip -4)
 
-          # 2. Aktifkan SSH sebagai akses utama/cadangan
-          sudo sysadminctl -addUser administrator1 -fullName "Admin" -password "$MAC_PASS" -admin
+          # 2. Reset Password Akun Utama 'runner' (Pemilik Sesi Desktop Aktif)
+          sudo sysadminctl -resetPasswordFor runner -newPassword "$MAC_PASS"
           sudo systemsetup -setremotelogin on
 
-          # 3. Install Virtual Display (DeskPad) & RustDesk + Lepas Segel Gatekeeper
-          brew install --cask deskpad rustdesk
-          sudo xattr -cr /Applications/DeskPad.app /Applications/RustDesk.app
-
-          # 4. Jalankan di background agar tidak memblokir terminal
+          # 3. Paksa Layar Virtual Nyala & Anti-Sleep
+          brew install --cask deskpad || true
+          sudo xattr -cr /Applications/DeskPad.app 2>/dev/null || true
+          sudo pmset -a displaysleep 0 sleep 0 disksleep 0 2>/dev/null || true
           nohup caffeinate -d -i -m -u >/dev/null 2>&1 &
-          open /Applications/DeskPad.app || true
+          open /Applications/DeskPad.app 2>/dev/null || true
           sleep 2
 
-          sudo nohup /Applications/RustDesk.app/Contents/MacOS/RustDesk --service >/dev/null 2>&1 &
-          sleep 3
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "$MAC_PASS" >/dev/null 2>&1 || true
-          open /Applications/RustDesk.app || true
-          sleep 3
+          # 4. Aktifkan VNC di Console Utama
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysStartOnConsole -bool true
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvnclegacy -vnclegacy yes \
+            -clientopts -setvncpw -vncpw "$MAC_PASS" \
+            -restart -agent -privs -all
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-          RD_ID=$(/Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id 2>/dev/null || echo "Pakai IP Tailscale")
+          # 5. Bypass UI Toggle Screen Sharing di System Settings via AppleScript
+          open "x-apple.systempreferences:com.apple.Sharing-Settings.extension" 2>/dev/null || true
+          sleep 3
+          osascript << 'APPLESCRIPT' 2>/dev/null || true
+          tell application "System Settings" to activate
+          delay 2
+          tell application "System Events"
+            tell process "System Settings"
+              set allElems to entire contents of window 1
+              repeat with elem in allElems
+                try
+                  if (class of elem is checkbox) then
+                    set elemName to (name of elem as text)
+                    set elemDesc to (description of elem as text)
+                    if (elemName contains "Screen Sharing" or elemDesc contains "Screen Sharing" or elemName contains "Remote Management" or elemDesc contains "Remote Management") then
+                      if (value of elem is 0) then
+                        click elem
+                      end if
+                    end if
+                  end if
+                end try
+              end repeat
+            end tell
+          end tell
+          APPLESCRIPT
 
           echo "========================================"
-          echo "MACOS DISPLAY AKTIF!"
-          echo "IP Tailscale (Direct IP) : $TS_IP"
-          echo "RustDesk ID              : $RD_ID"
-          echo "Password                 : (sesuai secret RDP_PASSWORD)"
+          echo "MACOS LATEST REALVNC AKTIF!"
+          echo "IP Tailscale : $TS_IP"
+          echo "Alamat VNC   : $TS_IP:5900"
+          echo "User Mac     : runner"
+          echo "Password     : (sesuai secret RDP_PASSWORD)"
           echo "========================================"
 
-          # Tahan sesi aktif hingga mendekati batas 6 jam
+          # 6. Kirim Info ke Bot Telegram
+          if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+            curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+              -d chat_id="$TG_CHAT_ID" \
+              -d text="macOS Latest RealVNC Aktif!%0AIP VNC: $TS_IP:5900%0AUser: runner%0APass: $MAC_PASS" >/dev/null
+          fi
+
+          # Tahan VM tetap hidup 5 jam 55 menit
           sleep 21300
           sudo tailscale logout
