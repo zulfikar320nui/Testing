@@ -27,23 +27,20 @@ jobs:
 
           # 3. Install Virtual Display (DeskPad) & RustDesk
           brew install --cask deskpad rustdesk
+          sleep 3
 
-          # 4. Izinkan akses TCC Screen Recording & Accessibility (jika SIP mengizinkan)
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1700000000);" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1700000000);" 2>/dev/null || true
-
-          # 5. Jalankan Virtual Display & RustDesk Service di sesi GUI 'runner'
-          open -a DeskPad
+          # 4. Cegah layar tidur & buka aplikasi pakai path lengkap
+          caffeinate -d -i -m -u &
+          open /Applications/DeskPad.app || true
           sleep 2
+
           sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --install-service || true
           sleep 3
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "$MAC_PASS"
-          open -a RustDesk
+          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "$MAC_PASS" || true
+          open /Applications/RustDesk.app || true
           sleep 3
 
-          RD_ID=$(/Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id 2>/dev/null || echo "Gunakan IP Tailscale")
+          RD_ID=$(/Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id 2>/dev/null || echo "Pakai IP Tailscale")
 
           echo "========================================"
           echo "MACOS DISPLAY AKTIF!"
