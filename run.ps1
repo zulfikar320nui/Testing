@@ -97,8 +97,9 @@ if (-not [string]::IsNullOrWhiteSpace($env:TG_BOT_TOKEN) -and -not [string]::IsN
 # 6. Tunggu 330 menit (5,5 jam)
 Start-Sleep -Seconds (330 * 60)
 
-# 7. Matikan Node agar tidak file-lock, lalu Packing Desktop (termasuk node_modules)
+# 7. Matikan Node & Bedrock agar tidak file-lock, lalu Packing Desktop (termasuk node_modules)
 taskkill /F /IM node.exe /T 2>$null
+taskkill /F /IM bedrock_server.exe /T 2>$null
 Start-Sleep -Seconds 3
 
 New-Item -ItemType Directory -Force -Path "C:\transfer_out\pack" | Out-Null
