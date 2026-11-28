@@ -1,0 +1,53 @@
+name: Ubuntu Tailscale + SSH
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ubuntu-ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Setup Tailscale & SSH
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          UBUNTU_PASS: ${{ secrets.RDP_PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          # 1. Install & Jalankan Tailscale
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo systemctl enable --now tailscaled || sudo nohup tailscaled >/dev/null 2>&1 &
+          sleep 3
+          sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="gh-ubuntu-$(shuf -i 1000-9999 -n 1)"
+          sleep 3
+          TS_IP=$(tailscale ip -4)
+
+          # 2. Buat User Admin 'administrator1' (Passwordless Sudo)
+          sudo useradd -m -s /bin/bash administrator1
+          echo "administrator1:$UBUNTU_PASS" | sudo chpasswd
+          sudo usermod -aG sudo administrator1
+          echo "administrator1 ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/administrator1 >/dev/null
+
+          # 3. Aktifkan Login Password SSH (file 00- agar menang dari cloudimg-settings)
+          echo "PasswordAuthentication yes" | sudo tee /etc/ssh/sshd_config.d/00-allow-password.conf >/dev/null
+          sudo sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh || sudo service ssh restart
+
+          echo "========================================"
+          echo "UBUNTU SSH AKTIF!"
+          echo "IP Tailscale : $TS_IP"
+          echo "SSH Command  : ssh administrator1@$TS_IP"
+          echo "Password     : (sesuai secret RDP_PASSWORD)"
+          echo "========================================"
+
+          # 4. Kirim Info ke Bot Telegram
+          if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+            curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+              -d chat_id="$TG_CHAT_ID" \
+              -d text="Ubuntu SSH Aktif!%0ASSH: ssh administrator1@$TS_IP%0APass: $UBUNTU_PASS" >/dev/null
+          fi
+
+          # Tahan VM tetap hidup 5 jam 55 menit
+          sleep 21300
+          sudo tailscale logout
